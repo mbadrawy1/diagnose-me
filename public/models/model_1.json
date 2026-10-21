@@ -1,0 +1,35 @@
+{
+  "model_id": "model_1",
+  "name": "Malaria Cell Classifier",
+  "description": "Detects Plasmodium parasites in thin blood-smear cell images.",
+  "modality": "microscopy",
+  "output_type": "sigmoid",
+  "positive_class": "Parasitized",
+  "negative_class": "Uninfected",
+  "classes": [
+    "Uninfected",
+    "Parasitized"
+  ],
+  "preprocessing": {
+    "resize": "bilinear",
+    "color": "RGB",
+    "scale": 0.00392156862745098
+  },
+  "source_file": "malaria_refactored_final_model.keras",
+  "onnx_file": "model_1.onnx",
+  "input_name": "input",
+  "input_shape": [
+    null,
+    128,
+    128,
+    3
+  ],
+  "output_shape": [
+    null,
+    1
+  ],
+  "parity_max_abs_diff": {
+    "fp32": 1.1920928955078125e-07,
+    "int8": null
+  }
+}
