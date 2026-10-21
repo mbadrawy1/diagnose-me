@@ -3,7 +3,7 @@ import "server-only";
 import path from "path";
 import fs from "fs";
 import sharp from "sharp";
-import * as ort from "onnxruntime-node";
+import * as ort from "onnxruntime-web";
 import { MODELS, type ModelId, type RiskLevel } from "@/lib/models";
 import { predictWithSpace, type HfPrediction } from "@/lib/hf";
 
@@ -24,7 +24,8 @@ async function getOrLoadSession(modelId: ModelId): Promise<ort.InferenceSession 
   for (const candidate of candidates) {
     if (fs.existsSync(/*turbopackIgnore: true*/ candidate)) {
       try {
-        const session = await ort.InferenceSession.create(candidate);
+        const fileBuffer = fs.readFileSync(/*turbopackIgnore: true*/ candidate);
+        const session = await ort.InferenceSession.create(new Uint8Array(fileBuffer));
         sessionCache.set(modelId, session);
         return session;
       } catch (err) {

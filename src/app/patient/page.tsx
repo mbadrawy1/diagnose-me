@@ -198,9 +198,20 @@ export default function PatientDashboard() {
         body: formData,
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        // Fallback if server returned non-JSON
+      }
+
       if (!res.ok) {
-        throw new Error(data.error || "Diagnosis failed");
+        throw new Error(data?.error || `Diagnostic scan failed (${res.status}: ${res.statusText || "Server error"})`);
+      }
+
+      if (!data) {
+        throw new Error("Received empty response from diagnostic server");
       }
 
       setAnalysisResult(data);

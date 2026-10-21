@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["sharp"],
   // Every page here is auth/cookie-dependent, so we use classic dynamic rendering
   // instead of Cache Components / partial prefetching.
   turbopack: {
