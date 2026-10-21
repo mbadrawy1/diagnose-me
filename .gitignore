@@ -1,0 +1,27 @@
+# ---- dependencies / build
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# ---- env & secrets
+.env
+.env*.local
+.secrets/
+
+# ---- Python / ML (model weights live ONLY on Hugging Face Spaces)
+.venv-ml/
+__pycache__/
+*.pyc
+*.keras
+*.onnx
+*.h5
+hf-space/models/
+
+# ---- tooling
+.vercel
+.DS_Store
+npm-debug.log*
+coverage/

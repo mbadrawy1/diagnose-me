@@ -1,0 +1,12 @@
+# Model weights + inference service are deployed to Hugging Face Spaces, never to Vercel
+*.keras
+*.onnx
+*.h5
+hf-space/
+hf-space/models/
+scripts/
+.venv-ml/
+.secrets/
+__pycache__/
+*.pyc
+.env*.local
