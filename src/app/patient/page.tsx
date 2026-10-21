@@ -166,6 +166,21 @@ export default function PatientDashboard() {
     setAnalysisResult(null);
   };
 
+  // Quick Load Sample Micrograph
+  const handleLoadSampleCell = async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const file = new File([blob], filename, { type: "image/png" });
+      setSelectedFile(file);
+      setPreviewUrl(url);
+      setAnalysisResult(null);
+      toast.info(`Loaded sample: ${filename}`);
+    } catch {
+      toast.error("Failed to load sample micrograph");
+    }
+  };
+
   // Submit scan to AI microservice
   const handleRunDiagnosis = async () => {
     if (!selectedFile) {
@@ -466,6 +481,36 @@ export default function PatientDashboard() {
                         </Button>
                       </div>
                     )}
+
+                    {/* Quick Test Samples */}
+                    <div className="pt-3 border-t border-border/60">
+                      <p className="text-[11px] font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                        <Sparkles className="h-3 w-3 text-blue-600" />
+                        Quick Test with Sample Micrographs:
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleLoadSampleCell("/sample-cells/parasitized_cell.png", "malaria_parasitized_trophozoite.png")}
+                          disabled={analyzing}
+                          className="text-[11px] h-8 justify-start border-rose-200 bg-rose-50/60 hover:bg-rose-100 text-rose-800"
+                        >
+                          🔬 Parasitized Cell
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleLoadSampleCell("/sample-cells/uninfected_cell.png", "uninfected_erythrocyte.png")}
+                          disabled={analyzing}
+                          className="text-[11px] h-8 justify-start border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-emerald-800"
+                        >
+                          🩸 Uninfected Cell
+                        </Button>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
               </div>

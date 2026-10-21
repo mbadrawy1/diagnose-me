@@ -17,6 +17,7 @@ import {
   MessageSquare,
   ShieldCheck,
   Calendar,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Navbar } from "@/components/Navbar";
+import { PointOfCareScanner } from "@/components/PointOfCareScanner";
 import { createClient } from "@/lib/supabase/client";
 import { RISK_STYLES, type RiskLevel } from "@/lib/models";
 import { toast } from "sonner";
@@ -39,6 +41,7 @@ export default function ProviderDashboard() {
   const [reports, setReports] = useState<any[]>([]);
   const [filter, setFilter] = useState<"all" | "pending" | "high_risk" | "validated">("all");
   const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<"worklist" | "scanner">("worklist");
 
   // Inspection & Validation Modal
   const [selectedReport, setSelectedReport] = useState<any | null>(null);
@@ -144,6 +147,17 @@ export default function ProviderDashboard() {
     }
   };
 
+  const handleScannerReportCreated = (data: { report: any; prediction: any; recommendations: string; image_url: string | null }) => {
+    const formatted = {
+      ...data.report,
+      patient: {
+        id: profile?.id,
+        full_name: profile?.full_name ? `Dr. ${profile.full_name} (Point-of-Care Scan)` : "Point-of-Care Scan",
+      },
+    };
+    setReports((prev) => [formatted, ...prev]);
+  };
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -224,6 +238,58 @@ export default function ProviderDashboard() {
           </div>
         </div>
 
+        {/* Navigation Mode Switcher */}
+        <div className="flex items-center gap-2 border-b border-border/60 pb-3">
+          <Button
+            variant={activeTab === "worklist" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setActiveTab("worklist")}
+            className={`text-xs h-9 gap-1.5 ${
+              activeTab === "worklist"
+                ? "bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-sm"
+                : "border-border text-foreground hover:bg-muted"
+            }`}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Clinical Triage Worklist
+            <Badge
+              variant="secondary"
+              className={`ml-1 text-[10px] px-1.5 py-0 ${
+                activeTab === "worklist" ? "bg-white/20 text-white" : "bg-muted text-foreground"
+              }`}
+            >
+              {pendingCount}
+            </Badge>
+          </Button>
+          <Button
+            variant={activeTab === "scanner" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setActiveTab("scanner")}
+            className={`text-xs h-9 gap-1.5 ${
+              activeTab === "scanner"
+                ? "bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-glow"
+                : "border-blue-300 text-blue-700 hover:bg-blue-50"
+            }`}
+          >
+            <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+            Point-of-Care AI Scanner
+            <Badge
+              variant="outline"
+              className="ml-1 text-[10px] px-1.5 py-0 border-emerald-300 bg-emerald-50 text-emerald-700"
+            >
+              Scan & Upload
+            </Badge>
+          </Button>
+        </div>
+
+        {activeTab === "scanner" ? (
+          <PointOfCareScanner
+            title="Doctor Point-of-Care Diagnostic Scanner"
+            description="Perform immediate digitized microscopy screening, evaluate cell classification probabilities, and attach findings directly to clinical records."
+            onReportCreated={handleScannerReportCreated}
+          />
+        ) : (
+          <>
         {/* Filter Controls & Search */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
@@ -353,6 +419,8 @@ export default function ProviderDashboard() {
             )}
           </CardContent>
         </Card>
+          </>
+        )}
       </main>
 
       {/* Inspection & Validation Dialog */}

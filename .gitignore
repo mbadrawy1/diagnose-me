@@ -25,3 +25,6 @@ hf-space/models/
 .DS_Store
 npm-debug.log*
 coverage/
+
+.vercel
+.env*
