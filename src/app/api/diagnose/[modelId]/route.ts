@@ -86,7 +86,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ mod
           buffer = Buffer.from(arrayBuf);
           filename = uploadedFile.name || "ecg_heartbeat.csv";
           fileExt = filename.toLowerCase().endsWith(".txt") ? "txt" : filename.toLowerCase().endsWith(".json") ? "json" : "csv";
-          mimeType = fileExt === "json" ? "application/json" : "text/csv";
+          mimeType = fileExt === "json" ? "application/json" : fileExt === "txt" ? "text/plain" : "text/csv";
           ecgFloats = parseEcgFloats(buffer);
         } else if (typeof signalField === "string" && signalField.trim().length > 0) {
           ecgFloats = parseEcgFloats(signalField);
