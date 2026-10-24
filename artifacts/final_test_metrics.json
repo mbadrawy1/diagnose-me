@@ -1,0 +1,8 @@
+{
+  "selected_model": "CNN1D",
+  "accuracy": 0.9390188196601498,
+  "macro_precision": 0.7199129595650168,
+  "macro_recall": 0.8703505333893531,
+  "macro_f1": 0.7728470000743284,
+  "weighted_f1": 0.9435280860499047
+}

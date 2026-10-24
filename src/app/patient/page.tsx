@@ -33,7 +33,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Navbar } from "@/components/Navbar";
-import { ChatAssistant } from "@/components/ChatAssistant";
 import { PointOfCareScanner } from "@/components/PointOfCareScanner";
 import { EcgWaveformChart } from "@/components/EcgWaveformChart";
 import { createClient } from "@/lib/supabase/client";
@@ -583,8 +582,6 @@ export default function PatientDashboard() {
         </Tabs>
       </main>
 
-      {/* 24/7 AI Health Assistant Floating Drawer */}
-      <ChatAssistant />
 
       {/* History Inspection Modal */}
       {selectedHistoryReport && (

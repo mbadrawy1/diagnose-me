@@ -1,0 +1,14 @@
+{
+  "model_name": "CNN1D",
+  "input_length": 187,
+  "input_features": 1,
+  "classes": {
+    "0": "N - Normal",
+    "1": "S - Supraventricular ectopic",
+    "2": "V - Ventricular ectopic",
+    "3": "F - Fusion beat",
+    "4": "Q - Unknown/unclassifiable"
+  },
+  "dataset": "Kaggle ECG Heartbeat Categorization Dataset \u2014 MIT-BIH task",
+  "warning": "Educational research only; not for medical diagnosis."
+}
