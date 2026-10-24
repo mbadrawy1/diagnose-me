@@ -9,19 +9,24 @@ import {
   CheckCircle,
   Info,
   Stethoscope,
-  ChevronRight,
-  ShieldAlert,
+  HeartPulse,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { MODELS, MODEL_IDS, type ModelId } from "@/lib/models";
+import { EcgWaveformChart } from "@/components/EcgWaveformChart";
+import {
+  NORMAL_BEAT_PRESET,
+  VENTRICULAR_ECTOPIC_PRESET,
+  parseEcgCsvOrText,
+} from "@/lib/ecgSamples";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 
 interface PointOfCareScannerProps {
-  onReportCreated?: (data: { report: any; prediction: any; recommendations: string; image_url: string | null }) => void;
+  onReportCreated?: (data: { report: any; prediction: any; recommendations: string; image_url: string | null; file_url?: string | null }) => void;
   title?: string;
   description?: string;
 }
@@ -29,29 +34,57 @@ interface PointOfCareScannerProps {
 export function PointOfCareScanner({
   onReportCreated,
   title = "AI Diagnosis Studio",
-  description = "Select a specialized diagnostic model, upload a thin smear micrograph or clinical scan, and run instant AI inference.",
+  description = "Select a specialized diagnostic model, upload medical scans or 1D ECG signals, and run instant AI inference.",
 }: PointOfCareScannerProps) {
   const [selectedModel, setSelectedModel] = useState<ModelId>("model_1");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [ecgSignal, setEcgSignal] = useState<number[] | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<{
     report: any;
     prediction: any;
     recommendations: string;
     image_url: string | null;
+    file_url?: string | null;
   } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleModelChange = (id: ModelId) => {
+    setSelectedModel(id);
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setEcgSignal(null);
+    setAnalysisResult(null);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setSelectedFile(file);
-    const objectUrl = URL.createObjectURL(file);
-    setPreviewUrl(objectUrl);
     setAnalysisResult(null);
+
+    if (selectedModel === "model_2") {
+      try {
+        const text = await file.text();
+        const signal = parseEcgCsvOrText(text);
+        if (signal.length === 0) {
+          toast.error("Could not parse numeric ECG values from file.");
+          return;
+        }
+        setEcgSignal(signal);
+        setPreviewUrl(null);
+        toast.info(`Loaded ${signal.length}-point ECG signal from ${file.name}`);
+      } catch (err) {
+        toast.error("Failed to read ECG file");
+      }
+    } else {
+      const objectUrl = URL.createObjectURL(file);
+      setPreviewUrl(objectUrl);
+      setEcgSignal(null);
+    }
   };
 
   const handleLoadSampleCell = async (url: string, filename: string) => {
@@ -61,6 +94,7 @@ export function PointOfCareScanner({
       const file = new File([blob], filename, { type: "image/png" });
       setSelectedFile(file);
       setPreviewUrl(url);
+      setEcgSignal(null);
       setAnalysisResult(null);
       toast.info(`Loaded sample micrograph: ${filename}`);
     } catch {
@@ -68,15 +102,39 @@ export function PointOfCareScanner({
     }
   };
 
+  const handleLoadSampleEcg = (type: "normal" | "pvc") => {
+    const isNormal = type === "normal";
+    const signal = isNormal ? NORMAL_BEAT_PRESET : VENTRICULAR_ECTOPIC_PRESET;
+    const filename = isNormal ? "normal_sinus_beat_sample.csv" : "ventricular_ectopic_pvc_sample.csv";
+    const csvContent = signal.join(",");
+    const file = new File([csvContent], filename, { type: "text/csv" });
+
+    setSelectedFile(file);
+    setEcgSignal(signal);
+    setPreviewUrl(null);
+    setAnalysisResult(null);
+    toast.info(`Loaded ${isNormal ? "Normal Beat" : "Ventricular Ectopic Beat"} sample (${signal.length} points)`);
+  };
+
   const handleRunDiagnosis = async () => {
-    if (!selectedFile) {
-      toast.error("Please upload or load a medical micrograph first.");
+    if (!selectedFile && !ecgSignal) {
+      toast.error(
+        selectedModel === "model_2"
+          ? "Please upload a .csv ECG file or click a sample beat first."
+          : "Please upload or load a medical micrograph first."
+      );
       return;
     }
 
     setAnalyzing(true);
     const formData = new FormData();
-    formData.append("file", selectedFile);
+
+    if (selectedFile) {
+      formData.append("file", selectedFile);
+    } else if (ecgSignal) {
+      const blob = new Blob([ecgSignal.join(",")], { type: "text/csv" });
+      formData.append("file", blob, "ecg_beat.csv");
+    }
 
     try {
       const res = await fetch(`/api/diagnose/${selectedModel}`, {
@@ -113,6 +171,8 @@ export function PointOfCareScanner({
     }
   };
 
+  const isModel2 = selectedModel === "model_2";
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-3">
@@ -145,7 +205,7 @@ export function PointOfCareScanner({
                   <button
                     key={id}
                     type="button"
-                    onClick={() => m.available && setSelectedModel(id)}
+                    onClick={() => m.available && handleModelChange(id)}
                     disabled={!m.available}
                     className={`w-full flex items-start justify-between rounded-xl border p-3 text-left transition-all ${
                       isSelected
@@ -186,11 +246,11 @@ export function PointOfCareScanner({
           <Card className="border-border/80 shadow-sm bg-card">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-bold font-display flex items-center gap-2">
-                <Upload className="h-4 w-4 text-blue-600" />
-                Cell Micrograph Upload
+                {isModel2 ? <HeartPulse className="h-4 w-4 text-rose-600" /> : <Upload className="h-4 w-4 text-blue-600" />}
+                {isModel2 ? "ECG Waveform Upload & Preview" : "Cell Micrograph Upload"}
               </CardTitle>
               <CardDescription className="text-xs">
-                {MODELS[selectedModel].inputHint || "Upload thin smear micrograph (PNG, JPG, WEBP)"}
+                {MODELS[selectedModel].inputHint || "Upload clinical scan"}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -202,94 +262,178 @@ export function PointOfCareScanner({
                 className="hidden"
               />
 
-              {previewUrl ? (
-                <div className="relative rounded-xl border border-border/70 overflow-hidden bg-slate-900 flex flex-col items-center justify-center p-4">
-                  <div className="relative h-52 w-52 rounded-lg overflow-hidden border border-white/20 shadow-md">
-                    <img src={previewUrl} alt="Cell Preview" className="h-full w-full object-cover" />
-                    {analyzing && (
-                      <div className="absolute inset-0 bg-blue-600/30 backdrop-blur-[1px] flex items-center justify-center">
-                        <div className="h-1 w-full bg-blue-400/80 animate-scan absolute"></div>
-                      </div>
-                    )}
+              {/* MODEL 2: 1D ECG PREVIEW */}
+              {isModel2 ? (
+                ecgSignal ? (
+                  <div className="space-y-3">
+                    <EcgWaveformChart
+                      signal={ecgSignal}
+                      title="Uploaded Heartbeat Waveform Preview"
+                      height={180}
+                    />
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={analyzing}
+                        className="text-xs h-8"
+                      >
+                        Change File
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleRunDiagnosis}
+                        disabled={analyzing}
+                        className="text-xs h-8 bg-blue-600 hover:bg-blue-700 text-white font-semibold gap-1.5"
+                      >
+                        {analyzing ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            Running 1D-CNN Inference...
+                          </>
+                        ) : (
+                          <>
+                            <Activity className="h-3.5 w-3.5" />
+                            Classify Arrhythmia Beat
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
-                  <div className="mt-3 flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={analyzing}
-                      className="text-xs h-8 text-white border-white/20 bg-white/10 hover:bg-white/20"
-                    >
-                      Change Image
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={handleRunDiagnosis}
-                      disabled={analyzing}
-                      className="text-xs h-8 bg-blue-600 hover:bg-blue-700 text-white font-semibold"
-                    >
-                      {analyzing ? (
-                        <>
-                          <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                          Running AI Inference...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-                          Analyze Scan Now
-                        </>
-                      )}
+                ) : (
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="group flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border/80 p-7 text-center hover:border-blue-500 hover:bg-blue-50/30 transition-all cursor-pointer"
+                  >
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-600 group-hover:scale-110 transition-transform">
+                      <HeartPulse className="h-6 w-6" />
+                    </div>
+                    <p className="mt-3 text-xs font-semibold text-foreground">Click or drag ECG .CSV file to upload</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      187 normalized heartbeat float values (single row or column)
+                    </p>
+                    <Button variant="outline" size="sm" className="mt-4 text-xs h-8">
+                      Browse .CSV / .TXT
                     </Button>
                   </div>
-                </div>
+                )
               ) : (
-                <div
-                  onClick={() => fileInputRef.current?.click()}
-                  className="group flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border/80 p-8 text-center hover:border-blue-500 hover:bg-blue-50/30 transition-all cursor-pointer"
-                >
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 group-hover:scale-110 transition-transform">
-                    <Upload className="h-6 w-6" />
+                /* MODEL 1: IMAGE PREVIEW */
+                previewUrl ? (
+                  <div className="relative rounded-xl border border-border/70 overflow-hidden bg-slate-900 flex flex-col items-center justify-center p-4">
+                    <div className="relative h-52 w-52 rounded-lg overflow-hidden border border-white/20 shadow-md">
+                      <img src={previewUrl} alt="Cell Preview" className="h-full w-full object-cover" />
+                      {analyzing && (
+                        <div className="absolute inset-0 bg-blue-600/30 backdrop-blur-[1px] flex items-center justify-center">
+                          <div className="h-1 w-full bg-blue-400/80 animate-scan absolute"></div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={analyzing}
+                        className="text-xs h-8 text-white border-white/20 bg-white/10 hover:bg-white/20"
+                      >
+                        Change Image
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleRunDiagnosis}
+                        disabled={analyzing}
+                        className="text-xs h-8 bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+                      >
+                        {analyzing ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                            Running AI Inference...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                            Analyze Scan Now
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
-                  <p className="mt-3 text-xs font-semibold text-foreground">Click or drag medical scan to upload</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">Supported: PNG, JPEG, WEBP, BMP (up to 10 MB)</p>
-                  <Button variant="outline" size="sm" className="mt-4 text-xs h-8">
-                    Browse Local Files
-                  </Button>
-                </div>
+                ) : (
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="group flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border/80 p-8 text-center hover:border-blue-500 hover:bg-blue-50/30 transition-all cursor-pointer"
+                  >
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 group-hover:scale-110 transition-transform">
+                      <Upload className="h-6 w-6" />
+                    </div>
+                    <p className="mt-3 text-xs font-semibold text-foreground">Click or drag medical scan to upload</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">Supported: PNG, JPEG, WEBP, BMP (up to 10 MB)</p>
+                    <Button variant="outline" size="sm" className="mt-4 text-xs h-8">
+                      Browse Local Files
+                    </Button>
+                  </div>
+                )
               )}
 
               {/* Quick Test Samples */}
               <div className="pt-3 border-t border-border/60">
                 <p className="text-[11px] font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
                   <Sparkles className="h-3 w-3 text-blue-600" />
-                  Quick Test with Sample Micrographs:
+                  {isModel2 ? "1-Click Built-in MIT-BIH Presets:" : "Quick Test with Sample Micrographs:"}
                 </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      handleLoadSampleCell("/sample-cells/parasitized_cell.png", "malaria_parasitized_ring_sample.png")
-                    }
-                    disabled={analyzing}
-                    className="text-[11px] h-8 justify-start border-rose-200 bg-rose-50/60 hover:bg-rose-100 text-rose-800"
-                  >
-                    🔬 Parasitized Cell
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      handleLoadSampleCell("/sample-cells/uninfected_cell.png", "uninfected_erythrocyte_sample.png")
-                    }
-                    disabled={analyzing}
-                    className="text-[11px] h-8 justify-start border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-emerald-800"
-                  >
-                    🩸 Uninfected Cell
-                  </Button>
-                </div>
+                {isModel2 ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleLoadSampleEcg("normal")}
+                      disabled={analyzing}
+                      className="text-[11px] h-8 justify-start border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-emerald-800"
+                    >
+                      💚 Normal Beat (Class N)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleLoadSampleEcg("pvc")}
+                      disabled={analyzing}
+                      className="text-[11px] h-8 justify-start border-rose-200 bg-rose-50/60 hover:bg-rose-100 text-rose-800"
+                    >
+                      ⚡ Ventricular Ectopic (PVC)
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        handleLoadSampleCell("/sample-cells/parasitized_cell.png", "malaria_parasitized_ring_sample.png")
+                      }
+                      disabled={analyzing}
+                      className="text-[11px] h-8 justify-start border-rose-200 bg-rose-50/60 hover:bg-rose-100 text-rose-800"
+                    >
+                      🔬 Parasitized Cell
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        handleLoadSampleCell("/sample-cells/uninfected_cell.png", "uninfected_erythrocyte_sample.png")
+                      }
+                      disabled={analyzing}
+                      className="text-[11px] h-8 justify-start border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-emerald-800"
+                    >
+                      🩸 Uninfected Cell
+                    </Button>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -318,7 +462,7 @@ export function PointOfCareScanner({
                     </h3>
                     <p className="text-[11px] opacity-90">
                       Model: {MODELS[selectedModel].name} · Inference time:{" "}
-                      {analysisResult.prediction.inference_ms || 4} ms
+                      {analysisResult.prediction.inference_ms || 1} ms
                     </p>
                   </div>
                 </div>
@@ -328,6 +472,21 @@ export function PointOfCareScanner({
               </div>
 
               <CardContent className="p-6 space-y-6">
+                {/* 1D ECG Waveform Chart if model_2 */}
+                {isModel2 && (analysisResult.prediction.signal_preview || ecgSignal) && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <HeartPulse className="h-4 w-4 text-rose-500" />
+                      187-Point ECG Arrhythmia Waveform Trace
+                    </h4>
+                    <EcgWaveformChart
+                      signal={analysisResult.prediction.signal_preview || ecgSignal || []}
+                      riskLevel={analysisResult.prediction.risk_level}
+                      height={200}
+                    />
+                  </div>
+                )}
+
                 {/* Confidence Meter */}
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs font-medium">
@@ -342,11 +501,19 @@ export function PointOfCareScanner({
                 {/* Probability Breakdown */}
                 <div className="rounded-xl border border-border/70 p-4 bg-muted/20">
                   <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">
-                    Class Probabilities
+                    {isModel2 ? "MIT-BIH Arrhythmia 5-Class Probabilities" : "Class Probabilities"}
                   </h4>
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     {Object.entries(analysisResult.prediction.probabilities || {}).map(([cls, prob]) => {
                       const val = Number(prob);
+                      let barColor = "bg-blue-500";
+                      if (cls.startsWith("N")) barColor = "bg-emerald-500";
+                      else if (cls.startsWith("S")) barColor = "bg-amber-500";
+                      else if (cls.startsWith("V")) barColor = "bg-rose-500";
+                      else if (cls.startsWith("F")) barColor = "bg-indigo-500";
+                      else if (cls.startsWith("Q")) barColor = "bg-slate-500";
+                      else if (cls === "Parasitized") barColor = "bg-rose-500";
+
                       return (
                         <div key={cls} className="space-y-1">
                           <div className="flex justify-between text-xs">
@@ -355,10 +522,8 @@ export function PointOfCareScanner({
                           </div>
                           <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
                             <div
-                              className={`h-full rounded-full ${
-                                cls === "Parasitized" ? "bg-rose-500" : "bg-blue-500"
-                              }`}
-                              style={{ width: `${val * 100}%` }}
+                              className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                              style={{ width: `${Math.max(1, val * 100)}%` }}
                             ></div>
                           </div>
                         </div>
@@ -404,7 +569,9 @@ export function PointOfCareScanner({
                 Ready for Diagnostic Screening
               </h3>
               <p className="text-xs text-muted-foreground max-w-sm mt-1.5 leading-relaxed">
-                Upload a digitized micrograph above or click one of the quick test sample buttons to trigger the ONNX AI diagnostic pipeline.
+                {isModel2
+                  ? "Upload a 187-sample ECG .CSV heartbeat recording or click one of the 1-click built-in presets (Normal or PVC) to test."
+                  : "Upload a digitized micrograph above or click one of the quick test sample buttons to trigger the ONNX AI diagnostic pipeline."}
               </p>
             </Card>
           )}

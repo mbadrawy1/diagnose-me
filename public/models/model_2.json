@@ -1,0 +1,31 @@
+{
+  "model_id": "model_2",
+  "name": "ECG Heartbeat Arrhythmia Classifier (MIT-BIH 5-Class 1D-CNN)",
+  "short_name": "ECG Arrhythmia",
+  "description": "1D Convolutional Neural Network that classifies single heartbeat ECG signals into 5 MIT-BIH arrhythmia categories.",
+  "modality": "cardiology",
+  "output_type": "softmax",
+  "classes": [
+    "N - Normal",
+    "S - Supraventricular ectopic",
+    "V - Ventricular ectopic",
+    "F - Fusion beat",
+    "Q - Unknown/unclassifiable"
+  ],
+  "healthy_classes": [
+    "N - Normal"
+  ],
+  "source_file": "cnn1d_best.keras",
+  "onnx_file": "model_2.onnx",
+  "keras_file": "model_2.keras",
+  "input_name": "input",
+  "input_shape": [
+    null,
+    187,
+    1
+  ],
+  "output_shape": [
+    null,
+    5
+  ]
+}

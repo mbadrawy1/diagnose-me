@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Calendar,
   Sparkles,
+  HeartPulse,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +28,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Navbar } from "@/components/Navbar";
 import { PointOfCareScanner } from "@/components/PointOfCareScanner";
+import { EcgWaveformChart } from "@/components/EcgWaveformChart";
+import { parseEcgCsvOrText } from "@/lib/ecgSamples";
 import { createClient } from "@/lib/supabase/client";
 import { RISK_STYLES, type RiskLevel } from "@/lib/models";
 import { toast } from "sonner";
@@ -46,6 +49,7 @@ export default function ProviderDashboard() {
   // Inspection & Validation Modal
   const [selectedReport, setSelectedReport] = useState<any | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [ecgSignal, setEcgSignal] = useState<number[] | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
   const [doctorNotes, setDoctorNotes] = useState("");
   const [validating, setValidating] = useState(false);
@@ -90,11 +94,18 @@ export default function ProviderDashboard() {
     loadData();
   }, [router, supabase]);
 
-  // Open Inspection Modal & fetch signed URL
+  // Open Inspection Modal & fetch signed URL / ECG data
   const handleInspectReport = async (report: any) => {
     setSelectedReport(report);
     setDoctorNotes(report.doctor_notes || "");
     setImageUrl(null);
+    setEcgSignal(null);
+
+    // If report has signal_preview in prediction_result, load immediately
+    const preview = (report.prediction_result as any)?.signal_preview;
+    if (Array.isArray(preview) && preview.length > 0) {
+      setEcgSignal(preview);
+    }
 
     if (report.file_storage_path) {
       setImageLoading(true);
@@ -103,9 +114,22 @@ export default function ProviderDashboard() {
         const data = await res.json();
         if (data.url) {
           setImageUrl(data.url);
+          // If model_2 and no signal_preview yet, fetch and parse the stored CSV
+          if (report.model_used === "model_2" && (!preview || preview.length === 0)) {
+            try {
+              const fileRes = await fetch(data.url);
+              const text = await fileRes.text();
+              const parsed = parseEcgCsvOrText(text);
+              if (parsed.length > 0) {
+                setEcgSignal(parsed);
+              }
+            } catch (fileErr) {
+              console.warn("Could not parse ECG storage file:", fileErr);
+            }
+          }
         }
       } catch (err) {
-        console.error("Failed to load scan image:", err);
+        console.error("Failed to load scan image/file:", err);
       } finally {
         setImageLoading(false);
       }
@@ -438,28 +462,51 @@ export default function ProviderDashboard() {
             </DialogHeader>
 
             <div className="space-y-6 pt-2">
-              {/* Scan Micrograph Viewer */}
-              <div className="rounded-xl border border-border/80 bg-slate-950 p-4 flex flex-col items-center justify-center">
-                {imageLoading ? (
-                  <div className="py-12 flex flex-col items-center gap-2 text-slate-400 text-xs">
-                    <RefreshCw className="h-6 w-6 animate-spin text-blue-500" />
-                    <span>Loading scan from secure Supabase storage...</span>
+              {/* Scan Micrograph OR 1D ECG Waveform Viewer */}
+              {selectedReport.model_used === "model_2" ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <HeartPulse className="h-4 w-4 text-rose-600" />
+                      187-Step Heartbeat ECG Waveform Inspection
+                    </span>
+                    <Badge variant="outline" className="text-[10px] font-mono border-rose-200 bg-rose-50 text-rose-700">
+                      MIT-BIH Arrhythmia Lead II
+                    </Badge>
                   </div>
-                ) : imageUrl ? (
-                  <div className="relative max-h-72 w-full flex items-center justify-center">
-                    <img
-                      src={imageUrl}
-                      alt="Medical scan"
-                      className="max-h-72 rounded-lg object-contain border border-white/10 shadow-lg"
-                    />
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-400 py-8">Scan file not available in storage.</p>
-                )}
-                <span className="mt-2 text-[10px] text-slate-400">
-                  Storage Path: {selectedReport.file_storage_path}
-                </span>
-              </div>
+                  <EcgWaveformChart
+                    signal={ecgSignal || (selectedReport.prediction_result as any)?.signal_preview || []}
+                    riskLevel={selectedReport.risk_level}
+                    height={210}
+                    title="Patient Electrocardiogram Trace"
+                  />
+                  <span className="block text-right text-[10px] text-muted-foreground font-mono">
+                    Storage: {selectedReport.file_storage_path}
+                  </span>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border/80 bg-slate-950 p-4 flex flex-col items-center justify-center">
+                  {imageLoading ? (
+                    <div className="py-12 flex flex-col items-center gap-2 text-slate-400 text-xs">
+                      <RefreshCw className="h-6 w-6 animate-spin text-blue-500" />
+                      <span>Loading scan from secure Supabase storage...</span>
+                    </div>
+                  ) : imageUrl ? (
+                    <div className="relative max-h-72 w-full flex items-center justify-center">
+                      <img
+                        src={imageUrl}
+                        alt="Medical scan"
+                        className="max-h-72 rounded-lg object-contain border border-white/10 shadow-lg"
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 py-8">Scan file not available in storage.</p>
+                  )}
+                  <span className="mt-2 text-[10px] text-slate-400">
+                    Storage Path: {selectedReport.file_storage_path}
+                  </span>
+                </div>
+              )}
 
               {/* AI Prediction Summary */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -486,6 +533,39 @@ export default function ProviderDashboard() {
                   </Badge>
                 </div>
               </div>
+
+              {/* Class Probability Breakdown */}
+              {(selectedReport.prediction_result as any)?.probabilities && (
+                <div className="rounded-xl border border-border/70 p-3.5 bg-muted/20 space-y-2">
+                  <span className="text-[11px] font-semibold text-foreground uppercase tracking-wider block">
+                    Classification Probabilities:
+                  </span>
+                  <div className="space-y-2">
+                    {Object.entries((selectedReport.prediction_result as any).probabilities).map(([cls, prob]) => {
+                      const val = Number(prob);
+                      let barColor = "bg-blue-500";
+                      if (cls.startsWith("N")) barColor = "bg-emerald-500";
+                      else if (cls.startsWith("S")) barColor = "bg-amber-500";
+                      else if (cls.startsWith("V")) barColor = "bg-rose-500";
+                      else if (cls.startsWith("F")) barColor = "bg-indigo-500";
+                      else if (cls.startsWith("Q")) barColor = "bg-slate-500";
+                      else if (cls === "Parasitized") barColor = "bg-rose-500";
+
+                      return (
+                        <div key={cls} className="space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span className="font-medium text-muted-foreground truncate">{cls}</span>
+                            <span className="font-semibold text-foreground font-mono">{(val * 100).toFixed(2)}%</span>
+                          </div>
+                          <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.max(1, val * 100)}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* AI Recommendations */}
               <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4 text-xs text-foreground/90 space-y-1">

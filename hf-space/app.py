@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 import numpy as np
-from fastapi import Depends, FastAPI, File, HTTPException, Path as PathParam, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Path as PathParam, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -45,6 +45,61 @@ class PredictionResponse(BaseModel):
     probabilities: Dict[str, float]
     risk_level: RiskLevel
     inference_ms: float
+    signal_preview: Optional[list[float]] = None
+
+
+def parse_ecg_signal(raw: Any) -> list[float]:
+    """Parses 187 ECG float values from JSON, CSV, TXT, or raw arrays.
+    Pads with zeros if < 187, slices if > 187, and discards 188th label column if present.
+    """
+    vals: list[float] = []
+    if isinstance(raw, (list, tuple)):
+        vals = [float(v) for v in raw]
+    elif isinstance(raw, (bytes, bytearray)):
+        text = raw.decode("utf-8", errors="ignore").strip()
+        if text.startswith("[") or text.startswith("{"):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict) and "signal" in parsed:
+                    vals = [float(v) for v in parsed["signal"]]
+                elif isinstance(parsed, list):
+                    vals = [float(v) for v in parsed]
+                else:
+                    raise ValueError()
+            except Exception:
+                text = text.replace(",", " ").replace("\n", " ").replace("\r", " ")
+                vals = [float(v) for v in text.split() if v.strip()]
+        else:
+            text = text.replace(",", " ").replace("\n", " ").replace("\r", " ")
+            vals = [float(v) for v in text.split() if v.strip()]
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if text.startswith("[") or text.startswith("{"):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict) and "signal" in parsed:
+                    vals = [float(v) for v in parsed["signal"]]
+                elif isinstance(parsed, list):
+                    vals = [float(v) for v in parsed]
+                else:
+                    raise ValueError()
+            except Exception:
+                text = text.replace(",", " ").replace("\n", " ").replace("\r", " ")
+                vals = [float(v) for v in text.split() if v.strip()]
+        else:
+            text = text.replace(",", " ").replace("\n", " ").replace("\r", " ")
+            vals = [float(v) for v in text.split() if v.strip()]
+    else:
+        raise ValueError("Unsupported ECG signal format")
+
+    if len(vals) == 188:
+        vals = vals[:187]
+    elif len(vals) < 187:
+        vals = vals + [0.0] * (187 - len(vals))
+    elif len(vals) > 187:
+        vals = vals[:187]
+
+    return [float(v) for v in vals]
 
 
 class LoadedModel:
@@ -53,12 +108,15 @@ class LoadedModel:
     def __init__(self, meta: Dict[str, Any]):
         self.meta = meta
         self.id: str = meta["model_id"]
-        shape = meta["input_shape"]  # e.g. [null, 128, 128, 3]
+        shape = meta["input_shape"]  # e.g. [null, 128, 128, 3] or [null, 187, 1]
         self.layout = meta.get("layout", "NHWC")
-        if self.layout == "NHWC":
-            self.h, self.w, self.c = shape[1], shape[2], shape[3]
-        else:  # NCHW
-            self.c, self.h, self.w = shape[1], shape[2], shape[3]
+        if len(shape) == 4:
+            if self.layout == "NHWC":
+                self.h, self.w, self.c = shape[1], shape[2], shape[3]
+            else:  # NCHW
+                self.c, self.h, self.w = shape[1], shape[2], shape[3]
+        elif len(shape) == 3:
+            self.seq_len, self.channels = shape[1], shape[2]
         self.backend = "onnx"
         self._load()
 
@@ -95,10 +153,14 @@ class LoadedModel:
 
     # ---------- inference ----------
     def preprocess(self, raw: bytes) -> np.ndarray:
+        if self.id == "model_2":
+            sig = parse_ecg_signal(raw)
+            return np.array(sig, dtype=np.float32).reshape(1, 187, 1)
+
         pp = self.meta.get("preprocessing", {})
         img = Image.open(io.BytesIO(raw))
         img = ImageOps.exif_transpose(img)
-        img = img.convert("L" if self.c == 1 else "RGB")
+        img = img.convert("L" if getattr(self, "c", 3) == 1 else "RGB")
         img = img.resize((self.w, self.h), Image.BILINEAR)
         x = np.asarray(img, dtype=np.float32)
         if x.ndim == 2:
@@ -118,6 +180,36 @@ class LoadedModel:
     def postprocess(self, y: np.ndarray) -> Dict[str, Any]:
         y = y.reshape(-1).astype(np.float64)
         classes = self.meta["classes"]
+
+        if self.id == "model_2":
+            if self.meta.get("output_type") == "logits":
+                e = np.exp(y - y.max())
+                y = e / e.sum()
+            probs = {c: float(p) for c, p in zip(classes, y)}
+            predicted = max(probs, key=probs.get)
+            confidence = probs[predicted]
+
+            # MIT-BIH Arrhythmia risk classification rules:
+            if predicted.startswith("N"):
+                risk: RiskLevel = "low"
+            elif predicted.startswith("S"):
+                risk = "high" if confidence > 0.85 else "medium"
+            elif predicted.startswith("V"):
+                risk = "critical" if confidence > 0.85 else "high"
+            elif predicted.startswith("F"):
+                risk = "medium"
+            elif predicted.startswith("Q"):
+                risk = "medium"
+            else:
+                risk = "medium"
+
+            return {
+                "predicted_class": predicted,
+                "confidence": round(confidence, 6),
+                "probabilities": {k: round(v, 6) for k, v in probs.items()},
+                "risk_level": risk,
+            }
+
         if self.meta.get("output_type") == "sigmoid" or y.size == 1:
             p_pos = float(np.clip(y[0], 0.0, 1.0))
             pos, neg = self.meta["positive_class"], self.meta["negative_class"]
@@ -154,18 +246,21 @@ MODELS: Dict[str, LoadedModel] = {}
 
 def load_all_models() -> None:
     for meta_file in sorted(MODELS_DIR.glob("model_*.json")):
-        meta = json.loads(meta_file.read_text())
-        mid = meta.get("model_id", meta_file.stem)
-        if mid not in ALLOWED_MODEL_IDS:
-            continue
         try:
+            meta = json.loads(meta_file.read_text())
+            mid = meta.get("model_id", meta_file.stem)
+            if mid not in ALLOWED_MODEL_IDS:
+                continue
             m = LoadedModel(meta)
-            dummy_shape = (1, m.h, m.w, m.c) if m.layout == "NHWC" else (1, m.c, m.h, m.w)
+            if len(m.meta["input_shape"]) == 4:
+                dummy_shape = (1, m.h, m.w, m.c) if m.layout == "NHWC" else (1, m.c, m.h, m.w)
+            else:
+                dummy_shape = (1, m.seq_len, m.channels)
             m.run(np.zeros(dummy_shape, np.float32))  # warm-up
             MODELS[mid] = m
             log.info("Loaded %s (%s, %s)", mid, m.backend, m.file)
         except Exception:  # keep serving the other models
-            log.exception("Failed to load %s", mid)
+            log.exception("Failed to load %s", meta_file.name)
 
 
 @asynccontextmanager
@@ -224,14 +319,87 @@ def list_models():
     }
 
 
+@app.post("/predict/model_2", response_model=PredictionResponse, dependencies=[Depends(require_token)])
+async def predict_model_2_endpoint(request: Request):
+    """Predicts MIT-BIH Arrhythmia class from 187-sample ECG heartbeat waveform.
+    Accepts CSV/TXT file upload, JSON payload `{"signal": [...]}`, or form field `signal`.
+    """
+    model = MODELS.get("model_2")
+    if model is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "model_2 is not available")
+
+    ct = request.headers.get("content-type", "")
+    signal_floats: Optional[list[float]] = None
+
+    if "application/json" in ct:
+        try:
+            body = await request.json()
+            if isinstance(body, dict) and "signal" in body:
+                signal_floats = parse_ecg_signal(body["signal"])
+            elif isinstance(body, list):
+                signal_floats = parse_ecg_signal(body)
+            else:
+                raise ValueError("JSON payload must contain 'signal' array or be an array of floats")
+        except Exception as e:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid JSON payload: {e}")
+    elif "multipart/form-data" in ct or "application/x-www-form-urlencoded" in ct:
+        try:
+            form = await request.form()
+            uploaded_file = form.get("file")
+            signal_field = form.get("signal")
+            if uploaded_file and hasattr(uploaded_file, "read"):
+                raw_bytes = await uploaded_file.read(MAX_UPLOAD_BYTES + 1)
+                if len(raw_bytes) > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File too large")
+                signal_floats = parse_ecg_signal(raw_bytes)
+            elif signal_field:
+                signal_floats = parse_ecg_signal(signal_field)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid form data: {e}")
+    else:
+        raw_body = await request.body()
+        if raw_body:
+            try:
+                signal_floats = parse_ecg_signal(raw_body)
+            except Exception as e:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Could not parse body: {e}")
+
+    if not signal_floats:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No ECG signal provided. Supply .csv/.txt file or 'signal' array.")
+
+    x = np.array(signal_floats, dtype=np.float32).reshape(1, 187, 1)
+    t0 = time.perf_counter()
+    y = model.run(x)
+    ms = (time.perf_counter() - t0) * 1000
+    res = model.postprocess(y)
+
+    return PredictionResponse(
+        model_id="model_2",
+        model_name=model.meta.get("name"),
+        inference_ms=round(ms, 2),
+        signal_preview=signal_floats,
+        **res
+    )
+
+
 @app.post("/predict/{model_id}", response_model=PredictionResponse, dependencies=[Depends(require_token)])
 async def predict(
+    request: Request,
     model_id: str = PathParam(..., pattern=r"^model_[123]$"),
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
 ):
     model = MODELS.get(model_id)
     if model is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"{model_id} is not available")
+
+    # If model_2 is called through generic endpoint, delegate to ECG handler
+    if model_id == "model_2":
+        return await predict_model_2_endpoint(request)
+
+    if file is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing file upload")
 
     raw = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(raw) > MAX_UPLOAD_BYTES:

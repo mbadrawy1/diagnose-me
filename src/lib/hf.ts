@@ -10,6 +10,7 @@ export interface HfPrediction {
   probabilities: Record<string, number>;
   risk_level: RiskLevel;
   inference_ms?: number;
+  signal_preview?: number[];
 }
 
 export class HfError extends Error {
@@ -18,24 +19,42 @@ export class HfError extends Error {
   }
 }
 
-/** Forwards an image to the HF Space inference API with the shared bearer secret. */
-export async function predictWithSpace(modelId: ModelId, file: Blob, filename: string): Promise<HfPrediction> {
+/** Forwards an image or ECG signal to the HF Space inference API with the shared bearer secret. */
+export async function predictWithSpace(
+  modelId: ModelId,
+  file: Blob,
+  filename: string,
+  signalArray?: number[]
+): Promise<HfPrediction> {
   const base = process.env.HF_SPACE_API_URL;
   const secret = process.env.HF_API_SECRET;
   if (!base || !secret) throw new HfError("AI service is not configured", 503);
 
-  const form = new FormData();
-  form.append("file", file, filename);
-
   let res: Response;
   try {
-    res = await fetch(`${base.replace(/\/$/, "")}/predict/${modelId}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${secret}` },
-      body: form,
-      cache: "no-store",
-      signal: AbortSignal.timeout(55_000),
-    });
+    if (modelId === "model_2" && signalArray && signalArray.length > 0) {
+      res = await fetch(`${base.replace(/\/$/, "")}/predict/model_2`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${secret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ signal: signalArray }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(55_000),
+      });
+    } else {
+      const form = new FormData();
+      form.append("file", file, filename);
+
+      res = await fetch(`${base.replace(/\/$/, "")}/predict/${modelId}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${secret}` },
+        body: form,
+        cache: "no-store",
+        signal: AbortSignal.timeout(55_000),
+      });
+    }
   } catch (e) {
     const timeout = e instanceof Error && e.name === "TimeoutError";
     throw new HfError(timeout ? "AI service timed out (it may be waking up — retry in a minute)" : "AI service unreachable", 504);

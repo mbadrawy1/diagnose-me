@@ -37,13 +37,15 @@ export const MODELS: Record<ModelId, ModelInfo> = {
   },
   model_2: {
     id: "model_2",
-    name: "Model 2",
-    shortName: "Coming soon",
-    description: "Reserved slot for the next diagnostic model (e.g. chest X-ray).",
-    modality: "Radiology",
-    accepts: "image/png,image/jpeg,image/webp",
-    inputHint: "",
-    available: false,
+    name: "Model 2: ECG Heartbeat Arrhythmia Classifier (MIT-BIH 5-Class 1D-CNN)",
+    shortName: "ECG Arrhythmia",
+    description:
+      "1D Convolutional Neural Network that classifies 187-step single heartbeat ECG traces into 5 MIT-BIH arrhythmia categories.",
+    modality: "Cardiology · 1D ECG",
+    accepts: ".csv,.txt,text/csv,text/plain,application/json",
+    inputHint: "Single ECG heartbeat of 187 time steps (normalized 0.0–1.0). Upload .csv/.txt or select a sample beat.",
+    available: true,
+    condition: "arrhythmia",
   },
   model_3: {
     id: "model_3",
@@ -70,10 +72,10 @@ export function buildRecommendations(
   risk: RiskLevel,
 ): string {
   const pct = `${(confidence * 100).toFixed(1)}%`;
-  const positive = model.positiveClass && predictedClass === model.positiveClass;
   const lines: string[] = [];
 
   if (model.id === "model_1") {
+    const positive = model.positiveClass && predictedClass === model.positiveClass;
     if (positive) {
       lines.push(
         `The AI detected features consistent with **malaria parasites** (${pct} confidence).`,
@@ -89,6 +91,50 @@ export function buildRecommendations(
         risk === "medium"
           ? "The model was not fully certain — consider re-testing with additional cells or a rapid diagnostic test."
           : "If you still have fever, chills, or recent travel to a malaria-endemic area, ask a clinician about further testing — a single cell cannot rule out infection.",
+      );
+    }
+  } else if (model.id === "model_2") {
+    const isNormal = predictedClass.startsWith("N");
+    const isSVE = predictedClass.startsWith("S");
+    const isPVC = predictedClass.startsWith("V");
+    const isFusion = predictedClass.startsWith("F");
+
+    if (isNormal) {
+      lines.push(
+        `The 1D-CNN classified this heartbeat as **Normal Sinus Rhythm (N)** with **${pct} confidence** (Risk: **${risk.toUpperCase()}**).`,
+        "No acute ventricular ectopic triggers, premature atrial contractions, or aberrant conduction morphology were identified in this 187-step cardiac segment.",
+        "**Clinical Recommendation:** Continue standard cardiovascular wellness. Maintain healthy blood pressure, balanced electrolyte intake, and regular aerobic exercise.",
+        "If you experience intermittent palpitations, dizziness, or lightheadedness, request a continuous multi-lead ECG or 24-hour Holter monitor from your physician."
+      );
+    } else if (isPVC) {
+      lines.push(
+        `The 1D-CNN detected a **Premature Ventricular Contraction / Ventricular Ectopic Beat (V)** with **${pct} confidence** (Risk: **${risk.toUpperCase()}**).`,
+        "This beat demonstrates premature ventricular depolarisation with broad QRS morphology and discordant repolarisation, bypassing the normal His-Purkinje conduction pathway.",
+        risk === "critical"
+          ? "**Urgent Clinical Attention Advised:** High-confidence ventricular ectopic rhythms carry elevated clinical risk. If you experience chest pain, shortness of breath, sudden sweating, or fainting, seek immediate emergency medical care."
+          : "**Clinical Recommendation:** Schedule a cardiology consultation for resting 12-lead ECG and echocardiogram to evaluate PVC burden and underlying myocardium health.",
+        "Minimize cardiac stimulants (excess caffeine, nicotine, pseudoephedrine) which can trigger ventricular ectopy."
+      );
+    } else if (isSVE) {
+      lines.push(
+        `The 1D-CNN identified a **Supraventricular Ectopic Beat (S)** with **${pct} confidence** (Risk: **${risk.toUpperCase()}**).`,
+        "Ectopic pacemaker originates above the ventricles (premature atrial or junctional contraction). While often benign, frequent occurrences may trigger sustained supraventricular tachycardia (SVT) or atrial fibrillation.",
+        "**Clinical Recommendation:** Keep a symptom diary noting episode triggers. Discuss with a physician whether a 24-to-48 hour ambulatory Holter monitor or thyroid/electrolyte panel is indicated.",
+        "Reduce caffeine and alcohol intake, ensure adequate hydration and restorative sleep."
+      );
+    } else if (isFusion) {
+      lines.push(
+        `The 1D-CNN identified a **Fusion Beat (F)** with **${pct} confidence** (Risk: **${risk.toUpperCase()}**).`,
+        "Concurrent cardiac activation occurred simultaneously from both the normal sinus pacemaker and an ectopic ventricular focus.",
+        "**Clinical Recommendation:** Clinical review by a cardiologist is advised to evaluate for competing ventricular pacemaker foci.",
+        "Recommend correlation with continuous ambulatory telemetry and 12-lead diagnostic electrocardiogram."
+      );
+    } else {
+      lines.push(
+        `The 1D-CNN classified this heartbeat as **Unclassifiable / Atypical Waveform (Q)** with **${pct} confidence** (Risk: **${risk.toUpperCase()}**).`,
+        "The heartbeat trace presents atypical morphology, baseline wander, or electrode noise that diverges from canonical MIT-BIH morphological archetypes.",
+        "**Clinical Recommendation:** Repeat the ECG recording ensuring skin preparation, solid electrode adhesion, and patient resting immobility.",
+        "Consult your healthcare provider if irregular pulse or palpitations persist."
       );
     }
   } else {
